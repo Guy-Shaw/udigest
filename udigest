@@ -1,0 +1,300 @@
+#! /usr/bin/perl -w
+    eval 'exec /usr/bin/perl -S $0 ${1+"$@"}'
+        if 0; #$running_under_some_shell
+
+# Filename: udigest
+# Brief: Annotate message digests with small digest id numbers.
+#
+# Copyright (C) 2016 Guy Shaw
+# Written by Guy Shaw <gshaw@acm.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+=pod
+
+=begin description
+
+Run a digest program (md5 sha1 sha2), then transform the output
+by adding a new field in front of each digest, which is a small.
+unique digest id number.
+
+The small digest IDs are ephemeral.  They are not related to
+the digests in any meaningful way outside of the current run
+of the udigest program.  Another run of the same program might
+assign a different digest-id to any given digest.  They are just
+number stamps, in order of arrival for each new digest.  But for
+a single run, all occurrences of a digest get the same digest-id.
+
+Options
+-------
+--show=<what>
+
+where <what> is either 'all' or any of 'lines', 'digests', or 'dup',
+or any subset of the three subset types in a comma-separated list.
+
+--long-fmt
+Print the entire input lines, message digest and all.
+Normally the digests themselves are stripped,
+and only the digest-ids and filenames are printed.
+
+=end description
+
+=cut
+
+require 5.0;
+use strict;
+use warnings;
+use Carp;
+use diagnostics;
+use Getopt::Long;
+use File::Spec::Functions;
+use Cwd qw(getcwd);             # Needed at least for explain_cwd()
+
+my $eprint_fh = *STDERR;
+my $dprint_fh = *STDERR;
+
+my $debug    = 0;
+my $verbose  = 0;
+my $long_fmt = 0;
+my $show_lines;
+my $show_digests_all;
+my $show_digests_dup;
+my $show_specs;
+my $relaxed = 1;
+
+my @options = (
+    'debug'    => \$debug,
+    'verbose'  => \$verbose,
+    'long-fmt' => \$long_fmt,
+    'show=s'   => \$show_specs,
+);
+
+#:subroutines:#
+
+# Decide how to direct eprint*() and dprint*() functions.
+# If STDOUT and STDERR are directed to the same "channel",
+# then eprint*() and dprint*() should be tied to the same file handle.
+#
+# Otherwise, buffering could cause a mix of STDOUT and STDERR to
+# be written out of order.
+#
+sub set_print_fh {
+    my @stdout_statv;
+    my @stderr_statv;
+    my $stdout_chan;
+    my $stderr_chan;
+
+    @stdout_statv = stat(*STDOUT);
+    @stderr_statv = stat(*STDERR);
+    $stdout_chan = join(':', @stdout_statv[0, 1, 6]);
+    $stderr_chan = join(':', @stderr_statv[0, 1, 6]);
+    if (!defined($eprint_fh)) {
+        $eprint_fh = ($stderr_chan eq $stdout_chan) ? *STDOUT : *STDERR;
+    }
+    if (!defined($dprint_fh)) {
+        $dprint_fh = ($stderr_chan eq $stdout_chan) ? *STDOUT : *STDERR;
+    }
+}
+
+sub eprint {
+    if (-t $eprint_fh) {
+        print {$eprint_fh} "\e[01;31m\e[K", @_, "\e[m\e[K";
+    }
+    else {
+        print {$eprint_fh} @_;
+    }
+}
+
+sub eprintf {
+    if (-t $eprint_fh) {
+        print  {$eprint_fh}  "\e[01;31m\e[K";
+        printf {$eprint_fh} @_;
+        print  {$eprint_fh}  "\e[m\e[K";
+    }
+    else {
+        printf {$eprint_fh} @_;
+    }
+}
+
+sub dprint {
+    print {$dprint_fh} @_ if ($debug);
+}
+
+sub dprintf {
+    printf {$dprint_fh} @_ if ($debug);
+}
+
+#:options:#
+
+set_print_fh();
+
+GetOptions(@options) or exit 2;
+
+if (!defined($show_specs)) {
+    $show_specs = 'all';
+}
+
+if ($show_specs eq 'all') {
+    $show_specs = 'lines,digests,dup';
+}
+
+for my $spec (split(/,/, $show_specs)) {
+    if ($spec eq 'lines') {
+        $show_lines = 1;
+    }
+    elsif ($spec eq 'digests') {
+        $show_digests_all = 1;
+    }
+    elsif ($spec eq 'dup') {
+        $show_digests_dup = 1;
+    }
+}
+
+#:main:#
+
+my @digest_list = ();
+my %digest_set  = ();
+my $max_digest_len = 0;
+my @ref_count = ();
+my @names = ();
+my $lnr;
+
+sub do_line {
+    my ($digest, $line) = @_;
+    my $udid = $digest_set{$digest};
+    my $rest;   # The rest of the line - typically a filename
+
+    $rest = $line;
+    $rest =~ s{\A([0-9A-Fa-f]+)\s+}{}msx;
+
+    if (defined($udid)) {
+        push(@{$names[$udid]}, $rest);
+    }
+    else {
+        $udid = scalar(@digest_list);
+        push(@digest_list, $digest);
+        $digest_set{$digest} = $udid;
+        $ref_count[$udid] = 0;
+        $names[$udid] = [ ];
+    }
+
+    if (length($digest) > $max_digest_len) {
+        $max_digest_len = length($digest);
+    }
+
+    if ($show_lines) {
+        printf '[%03u] ', $udid;
+        if ($long_fmt) {
+            print  $line, "\n";
+        }
+        else {
+            print  $rest, "\n";
+        }
+    }
+
+    ++$ref_count[$udid];
+}
+
+$lnr = 0;
+while (<>) {
+    chomp;
+    ++$lnr;
+    s{\r\z}{}msx;
+    s{\#.*}{}msx;
+    s{\s+\z}{}msx;
+    next if ($_ eq '');
+
+    if (m{\A([0-9A-Fa-f]+)\s+}msx) {
+        do_line($1, $_);
+    }
+    elsif (m{\(.*\)\s+=\s+([0-9A-Fa-f]+)\z}msx) {
+        do_line($1, $_);
+    }
+    elsif ($relaxed) {
+        my ($digest, $rest) = split(/\s+/, $_, 2);
+        do_line($digest, $rest);
+    }
+    else {
+        eprint "Line %u: $_\n";
+        eprint "ERROR: Expecting lines of the form:\n";
+        eprint "    <hex-digest> <spaces> <filename>\n";
+    }
+}
+
+# #################### Count how many digests total; measure for format
+#
+my $nudids = scalar(@digest_list);
+my $udid;
+my $udid_fmt = sprintf('%%0%uu', length($nudids));
+
+
+# #################### Measure highest count of non-unique digests
+
+my $max_ref_count;
+
+$max_ref_count = 0;
+for ($udid = 0; $udid < scalar(@ref_count); ++$udid) {
+    if ($ref_count[$udid] > $max_ref_count) {
+        $max_ref_count = $ref_count[$udid];
+    }
+}
+my $refc_fmt = sprintf('%%%uu', length($max_ref_count));
+
+my $cw1 = length($nudids) + 2;
+my $cw2 = length($max_ref_count);
+my $cw3 = $max_digest_len;
+my $hdr1_fmt = sprintf('%%%us %%0.%us digests', $cw1, $cw2);
+my $hdr1 = sprintf($hdr1_fmt, 'id', 'cnt');
+my $hdr2 = join(' ', '-' x $cw1, '-' x $cw2, '-' x $cw3);
+
+# #################### Show all digests
+#
+# Show { 1: short unique digest id , 2: full hex digest }
+# for each hex digest.
+#
+if ($show_digests_all) {
+    print "\n";
+    print "Digests:\n";
+    print '    ', $hdr1, "\n";
+    print '    ', $hdr2, "\n";
+    for ($udid = 0; $udid < $nudids; ++$udid) {
+        printf "    [${udid_fmt}] ${refc_fmt} %s\n",
+               $udid, $ref_count[$udid], $digest_list[$udid];
+    }
+}
+
+# #################### Show non-unique digests
+#
+
+if ($show_digests_dup) {
+    my $enr = 0;
+    for ($udid = 0; $udid < scalar(@ref_count); ++$udid) {
+        if ($ref_count[$udid] >= 2) {
+            if ($enr == 0) {
+                print "\n";
+                print "Non-unique digests:\n";
+                print '    ', $hdr1, "\n";
+                print '    ', $hdr2, "\n";
+            }
+            printf "    [${udid_fmt}] ${refc_fmt} %s\n",
+                   $udid, $ref_count[$udid], $digest_list[$udid];
+            for my $rest (@{$names[$udid]}) {
+                print '              ', $rest, "\n";
+            }
+            ++$enr;
+        }
+    }
+}
+
+exit 0;
