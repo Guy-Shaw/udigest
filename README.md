@@ -26,7 +26,7 @@ consisting of:
 where _count_ is the number of input lines having that same
 digest.
 
-The third for of output is a list of only the non-unique
+The third form of output is a list of only the non-unique
 digests.  It consist of { id, count, digest } triples,
 but only for those digest that have count >= 2,
 and for each triple, all of the file names with that same
@@ -51,10 +51,36 @@ That is, just show the duplicates.
 The default is `--show=all`,
 which is equivalent to `--show=lines,digests,dup`.
 
---long-fmt
+`--long-fmt`
+
 Print the entire input lines, message digest and all.
 Normally the digests themselves are stripped,
 and only the digest-ids and filenames are printed.
+
+###
+
+The following options determine what kind of digests to expect,
+and how strict to be in determining what is and is not considered
+a digest.
+
+`--hex`
+
+The digests are encoded as hexadecimal digits.
+Lines that do not start with hex digits followed by white space
+are ignored.  If some input lines were ignored, that fact is noted.
+
+`--base64`
+
+The digest are encoded as base64.
+Lines that do not start with valid looking base64 followed by white space
+are ignored.  If some input lines were ignored, that fact is noted.
+
+`--relaxed`
+
+Accept pretty much anything for the first field of each line
+as a digest of some kind.  We do actually validate or do any
+computing; we just store, compare, and report on what is unique
+and non-unique.
 
 
 ####

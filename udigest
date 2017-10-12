@@ -71,13 +71,16 @@ my $show_lines;
 my $show_digests_all;
 my $show_digests_dup;
 my $show_specs;
-my $relaxed = 1;
+my $encoding = 'relaxed';
 
 my @options = (
     'debug'    => \$debug,
     'verbose'  => \$verbose,
     'long-fmt' => \$long_fmt,
     'show=s'   => \$show_specs,
+    'hex'      => sub { $encoding = 'hex'; },
+    'base64'   => sub { $encoding = 'base64'; },
+    'relaxed'  => sub { $encoding = 'relaxed'; },
 );
 
 #:subroutines:#
@@ -169,6 +172,7 @@ my $max_digest_len = 0;
 my @ref_count = ();
 my @names = ();
 my $lnr;
+my $non_digest_cnt = 0;     # Count of lines that are not digests
 
 sub do_line {
     my ($digest, $line) = @_;
@@ -178,16 +182,14 @@ sub do_line {
     $rest = $line;
     $rest =~ s{\A([0-9A-Fa-f]+)\s+}{}msx;
 
-    if (defined($udid)) {
-        push(@{$names[$udid]}, $rest);
-    }
-    else {
+    if (!defined($udid)) {
         $udid = scalar(@digest_list);
         push(@digest_list, $digest);
         $digest_set{$digest} = $udid;
         $ref_count[$udid] = 0;
         $names[$udid] = [ ];
     }
+    push(@{$names[$udid]}, $rest);
 
     if (length($digest) > $max_digest_len) {
         $max_digest_len = length($digest);
@@ -215,21 +217,33 @@ while (<>) {
     s{\s+\z}{}msx;
     next if ($_ eq '');
 
-    if (m{\A([0-9A-Fa-f]+)\s+}msx) {
-        do_line($1, $_);
+    if ($encoding eq 'hex') {
+        if (m{\A([0-9A-Fa-f]+)\z}msx) {
+            do_line($1, '');
+        }
+        elsif (m{\A([0-9A-Fa-f]+)\s+}msx) {
+            do_line($1, $_);
+        }
+        elsif (m{\(.*\)\s+=\s+([0-9A-Fa-f]+)\z}msx) {
+            do_line($1, $_);
+        }
+        else {
+            ++$non_digest_cnt;
+        }
     }
-    elsif (m{\(.*\)\s+=\s+([0-9A-Fa-f]+)\z}msx) {
-        do_line($1, $_);
-    }
-    elsif ($relaxed) {
+    elsif ($encoding eq 'base64' || $encoding eq 'relaxed') {
         my ($digest, $rest) = split(/\s+/, $_, 2);
-        do_line($digest, $rest);
+        do_line($digest, $rest || '');
     }
     else {
         eprint "Line %u: $_\n";
         eprint "ERROR: Expecting lines of the form:\n";
         eprint "    <hex-digest> <spaces> <filename>\n";
     }
+}
+
+if ($non_digest_cnt) {
+    print "Read and ignored ${non_digest_cnt} lines that were not digests.\n";
 }
 
 # #################### Count how many digests total; measure for format
@@ -263,7 +277,7 @@ my $hdr2 = join(' ', '-' x $cw1, '-' x $cw2, '-' x $cw3);
 # Show { 1: short unique digest id , 2: full hex digest }
 # for each hex digest.
 #
-if ($show_digests_all) {
+if ($show_digests_all && $nudids != 0) {
     print "\n";
     print "Digests:\n";
     print '    ', $hdr1, "\n";
@@ -277,7 +291,7 @@ if ($show_digests_all) {
 # #################### Show non-unique digests
 #
 
-if ($show_digests_dup) {
+if ($show_digests_dup && $nudids != 0) {
     my $enr = 0;
     for ($udid = 0; $udid < scalar(@ref_count); ++$udid) {
         if ($ref_count[$udid] >= 2) {
