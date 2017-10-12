@@ -51,6 +51,12 @@ That is, just show the duplicates.
 The default is `--show=all`,
 which is equivalent to `--show=lines,digests,dup`.
 
+`--shorten`
+
+Shorten the digests.
+Show only enough of the digests needed to be unique
+among the digest in the input.
+
 `--long-fmt`
 
 Print the entire input lines, message digest and all.

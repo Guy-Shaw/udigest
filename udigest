@@ -72,12 +72,15 @@ my $show_digests_all;
 my $show_digests_dup;
 my $show_specs;
 my $encoding = 'relaxed';
+my $shorten = 0;
+my $ulen;
 
 my @options = (
     'debug'    => \$debug,
     'verbose'  => \$verbose,
     'long-fmt' => \$long_fmt,
     'show=s'   => \$show_specs,
+    'shorten'  => \$shorten,
     'hex'      => sub { $encoding = 'hex'; },
     'base64'   => sub { $encoding = 'base64'; },
     'relaxed'  => sub { $encoding = 'relaxed'; },
@@ -138,6 +141,35 @@ sub dprintf {
     printf {$dprint_fh} @_ if ($debug);
 }
 
+sub is_hex_digest {
+    my ($digest) = @_;
+
+    return $digest =~ m{\A([0-9A-Fa-f]+)\z}msx;
+}
+
+sub is_base64_digest {
+    my ($digest) = @_;
+
+    return $digest =~ m{\A[A-Za-z0-9+/]+\z}msx;
+}
+
+sub is_valid_digest {
+    my ($digest, $encoding) = @_;
+
+    if ($encoding eq 'hex') {
+        return is_hex_digest($digest);
+    }
+    elsif ($encoding eq 'base64') {
+        return is_base64_digest($digest);
+    }
+    elsif ($encoding eq 'relaxed') {
+        return 1;
+    }
+    else {
+        croak "INTERNAL ERROR: bad encoding, '${encoding}'.";
+    }
+}
+
 #:options:#
 
 set_print_fh();
@@ -175,12 +207,8 @@ my $lnr;
 my $non_digest_cnt = 0;     # Count of lines that are not digests
 
 sub do_line {
-    my ($digest, $line) = @_;
+    my ($digest, $rest, $line) = @_;
     my $udid = $digest_set{$digest};
-    my $rest;   # The rest of the line - typically a filename
-
-    $rest = $line;
-    $rest =~ s{\A([0-9A-Fa-f]+)\s+}{}msx;
 
     if (!defined($udid)) {
         $udid = scalar(@digest_list);
@@ -216,34 +244,37 @@ while (<>) {
     s{\#.*}{}msx;
     s{\s+\z}{}msx;
     next if ($_ eq '');
-
-    if ($encoding eq 'hex') {
-        if (m{\A([0-9A-Fa-f]+)\z}msx) {
-            do_line($1, '');
-        }
-        elsif (m{\A([0-9A-Fa-f]+)\s+}msx) {
-            do_line($1, $_);
-        }
-        elsif (m{\(.*\)\s+=\s+([0-9A-Fa-f]+)\z}msx) {
-            do_line($1, $_);
-        }
-        else {
-            ++$non_digest_cnt;
-        }
-    }
-    elsif ($encoding eq 'base64' || $encoding eq 'relaxed') {
-        my ($digest, $rest) = split(/\s+/, $_, 2);
-        do_line($digest, $rest || '');
+    my ($digest, $rest) = split(/\s+/, $_, 2);
+    if (is_valid_digest($digest, $encoding)) {
+        do_line($digest, $rest || '', $_);
     }
     else {
         eprint "Line %u: $_\n";
         eprint "ERROR: Expecting lines of the form:\n";
         eprint "    <hex-digest> <spaces> <filename>\n";
+        ++$non_digest_cnt;
     }
 }
 
+
 if ($non_digest_cnt) {
     print "Read and ignored ${non_digest_cnt} lines that were not digests.\n";
+}
+
+if ($shorten) {
+    my $max_ulen = 1;
+    my %short_digests;
+
+    for my $digest (@digest_list) {
+        if (length($digest) > $max_ulen) {
+            $max_ulen = length($digest);
+        }
+    }
+
+    for ($ulen = 1; $ulen <= $max_ulen; ++$ulen) {
+        %short_digests = map { ( substr($_, 0, $ulen), 1 ) } @digest_list;
+        last if (scalar(keys %short_digests) == scalar(@digest_list));
+    }
 }
 
 # #################### Count how many digests total; measure for format
@@ -283,8 +314,10 @@ if ($show_digests_all && $nudids != 0) {
     print '    ', $hdr1, "\n";
     print '    ', $hdr2, "\n";
     for ($udid = 0; $udid < $nudids; ++$udid) {
+        my $digest = $digest_list[$udid];
+        my $d = $shorten ? substr($digest, 0, $ulen) : $digest;
         printf "    [${udid_fmt}] ${refc_fmt} %s\n",
-               $udid, $ref_count[$udid], $digest_list[$udid];
+               $udid, $ref_count[$udid], $d;
     }
 }
 
