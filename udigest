@@ -198,11 +198,12 @@ for my $spec (split(/,/, $show_specs)) {
 
 #:main:#
 
-my @digest_list = ();
-my %digest_set  = ();
+my @lines = ();         # Save original content for pass 2, if we show lines
+my @digest_list = ();   # List of digest, in order of arrival, but unique
+my %digest_set  = ();   # map of digest -> unique digest ID
 my $max_digest_len = 0;
-my @ref_count = ();
-my @names = ();
+my @ref_count = ();     # How many input lines refer to this UDID ?
+my @names = ();         # Map of UDID -> list of filenames with same digest
 my $lnr;
 my $non_digest_cnt = 0;     # Count of lines that are not digests
 
@@ -224,13 +225,9 @@ sub do_line {
     }
 
     if ($show_lines) {
-        printf '[%03u] ', $udid;
-        if ($long_fmt) {
-            print  $line, "\n";
-        }
-        else {
-            print  $rest, "\n";
-        }
+        my $contents = $long_fmt ? $line : $rest;
+        my $rec = join("\000", $udid, $contents);
+        push(@lines, $rec);
     }
 
     ++$ref_count[$udid];
@@ -277,12 +274,27 @@ if ($shorten) {
     }
 }
 
-# #################### Count how many digests total; measure for format
+
+# #################### Count how many unique digests total; measure for format
 #
-my $nudids = scalar(@digest_list);
+my $nudids = scalar(keys %digest_set);
 my $udid;
 my $udid_fmt = sprintf('%%0%uu', length($nudids));
 
+# #################### Show the digests and maybe the rest of the line
+#
+
+if ($show_lines) {
+    for my $rec (@lines) {
+        my ($udid, $contents) = split(/\000/, $rec);
+        my $digest = $digest_list[$udid];
+        print '[', sprintf($udid_fmt, $udid), ']';
+        if ($long_fmt) {
+            print ' ', $digest;
+        }
+        print ' ', $contents, "\n";
+    }
+}
 
 # #################### Measure highest count of non-unique digests
 
