@@ -34,9 +34,9 @@ digest are listed.
 
 ### Options
 
-`--show=`_<what>_
+`--show=`_what_
 
-where _<what>_ is either 'all' or any of 'lines', 'digests', or 'dup',
+where _what_ is either 'all' or any of 'lines', 'digests', or 'dup',
 or any subset of the three subset types in a comma-separated list.
 
 `--show=lines` means just show the first form of output.
